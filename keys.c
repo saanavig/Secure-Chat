@@ -4,8 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <gmp.h>
 #include "util.h"
 #include <openssl/sha.h>
+
+int gmp_fprintf(FILE *, const char *, ...);
+int gmp_fscanf(FILE *, const char *, ...);
 
 int initKey(dhKey* k)
 {

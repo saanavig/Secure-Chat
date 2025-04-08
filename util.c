@@ -5,7 +5,20 @@
 #include <stdio.h>
 #include <assert.h>
 #include <inttypes.h>
+
+#ifdef __APPLE__
+#include <libkern/OSByteOrder.h>
+
+#define htobe64(x) OSSwapHostToBigInt64(x)
+#define be64toh(x) OSSwapBigToHostInt64(x)
+#define htole32(x) OSSwapHostToLittleInt32(x)
+#define le32toh(x) OSSwapLittleToHostInt32(x)
+
+#else
 #include <endian.h>
+#endif
+
+
 #include <string.h>
 
 /* when reading long integers, never read more than this many bytes: */

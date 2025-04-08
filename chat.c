@@ -10,6 +10,10 @@
 #include "dh.h"
 #include "keys.h"
 
+#ifndef HOST_NAME_MAX
+#define HOST_NAME_MAX 256
+#endif
+
 #ifndef PATH_MAX
 #define PATH_MAX 1024
 #endif
@@ -116,6 +120,7 @@ static const char* usage =
  * that messsage is a NULL terminated string.  If ensurenewline is non-zero, then
  * a newline may be added at the end of the string (possibly overwriting the \0
  * char!) and the view will be scrolled to ensure the added line is visible.  */
+
 static void tsappend(char* message, char** tagnames, int ensurenewline)
 {
 	GtkTextIter t0;

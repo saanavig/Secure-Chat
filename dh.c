@@ -8,7 +8,7 @@
 #include <gmp.h>
 #include "dh.h"
 #include <string.h>
-#include <endian.h>
+#include <machine/endian.h>
 #include <assert.h>
 #include "util.h"
 
@@ -23,6 +23,14 @@ size_t pLen; /* length of p in bytes */
 
 /* NOTE: this constant is arbitrary and does not need to be secret. */
 const char* hmacsalt = "z3Dow}^Z]8Uu5>pr#;{QUs!133";
+
+#ifdef __APPLE__
+#include <libkern/OSByteOrder.h>
+static inline uint64_t htobe64(uint64_t x) {
+    return OSSwapHostToBigInt64(x);
+}
+#endif
+
 
 int init(const char* fname)
 {
