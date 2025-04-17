@@ -1,11 +1,12 @@
 #include <gtk/gtk.h>
-#include <glib/gunicode.h> /* for utf8 strlen */
+#include <glib/gunicode.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/rand.h>
 #include <getopt.h>
 #include "dh.h"
 #include "keys.h"
@@ -18,20 +19,21 @@
 #define PATH_MAX 1024
 #endif
 
-static GtkTextBuffer* tbuf; /* transcript buffer */
-static GtkTextBuffer* mbuf; /* message buffer */
-static GtkTextView*  tview; /* view for transcript */
-static GtkTextMark*   mark; /* used for scrolling to end of transcript, etc */
+#define SYMM_KEY_LEN 32
+unsigned char shared_key[SYMM_KEY_LEN] = {0};
 
-static pthread_t trecv;     /* wait for incoming messagess and post to queue */
-void* recvMsg(void*);       /* for trecv */
+static GtkTextBuffer* tbuf;
+static GtkTextBuffer* mbuf;
+static GtkTextView*  tview;
+static GtkTextMark*   mark;
 
-#define max(a, b)         \
-	({ typeof(a) _a = a;    \
-	 typeof(b) _b = b;    \
-	 _a > _b ? _a : _b; })
+static pthread_t trecv;
+void* recvMsg(void*);
 
-/* network stuff... */
+#define max(a, b) \
+	({ typeof(a) _a = a; \
+		typeof(b) _b = b; \
+		_a > _b ? _a : _b; })
 
 static int listensock, sockfd;
 static int isclient = 1;
@@ -42,13 +44,64 @@ static void error(const char *msg)
 	exit(EXIT_FAILURE);
 }
 
+int encrypt_message(const unsigned char *plaintext, int plaintext_len,
+                    const unsigned char *key, unsigned char *iv,
+                    unsigned char *ciphertext)
+{
+    EVP_CIPHER_CTX *ctx;
+    int len;
+    int ciphertext_len;
+
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return -1;
+
+    if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv))
+        return -1;
+
+    if (1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len))
+        return -1;
+    ciphertext_len = len;
+
+    if (1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len))
+        return -1;
+    ciphertext_len += len;
+
+    EVP_CIPHER_CTX_free(ctx);
+    return ciphertext_len;
+}
+
+int decrypt_message(const unsigned char *ciphertext, int ciphertext_len,
+                    const unsigned char *key, const unsigned char *iv,
+                    unsigned char *plaintext)
+{
+    EVP_CIPHER_CTX *ctx;
+    int len;
+    int plaintext_len;
+
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return -1;
+
+    if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv))
+        return -1;
+
+    if (1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len))
+        return -1;
+    plaintext_len = len;
+
+    if (1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len))
+        return -1;
+    plaintext_len += len;
+
+    EVP_CIPHER_CTX_free(ctx);
+    return plaintext_len;
+}
+
 int initServerNet(int port)
 {
 	int reuse = 1;
 	struct sockaddr_in serv_addr;
 	listensock = socket(AF_INET, SOCK_STREAM, 0);
 	setsockopt(listensock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-	/* NOTE: might not need the above if you make sure the client closes first */
 	if (listensock < 0)
 		error("ERROR opening socket");
 	bzero((char *) &serv_addr, sizeof(serv_addr));
@@ -66,7 +119,6 @@ int initServerNet(int port)
 		error("error on accept");
 	close(listensock);
 	fprintf(stderr, "connection made, starting session...\n");
-	/* at this point, should be able to send/recv on sockfd */
 	return 0;
 }
 
@@ -88,7 +140,6 @@ static int initClientNet(char* hostname, int port)
 	serv_addr.sin_port = htons(port);
 	if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0)
 		error("ERROR connecting");
-	/* at this point, should be able to send/recv on sockfd */
 	return 0;
 }
 
@@ -104,9 +155,6 @@ static int shutdownNetwork()
 	return 0;
 }
 
-/* end network stuff. */
-
-
 static const char* usage =
 "Usage: %s [OPTIONS]...\n"
 "Secure chat (CCNY computer security project).\n\n"
@@ -114,12 +162,6 @@ static const char* usage =
 "   -l, --listen        Listen for new connections.\n"
 "   -p, --port    PORT  Listen or connect on PORT (defaults to 1337).\n"
 "   -h, --help          show this message and exit.\n";
-
-/* Append message to transcript with optional styling.  NOTE: tagnames, if not
- * NULL, must have it's last pointer be NULL to denote its end.  We also require
- * that messsage is a NULL terminated string.  If ensurenewline is non-zero, then
- * a newline may be added at the end of the string (possibly overwriting the \0
- * char!) and the view will be scrolled to ensure the added line is visible.  */
 
 static void tsappend(char* message, char** tagnames, int ensurenewline)
 {
@@ -131,7 +173,6 @@ static void tsappend(char* message, char** tagnames, int ensurenewline)
 	gtk_text_buffer_insert(tbuf,&t0,message,len);
 	GtkTextIter t1;
 	gtk_text_buffer_get_end_iter(tbuf,&t1);
-	/* Insertion of text may have invalidated t0, so recompute: */
 	t0 = t1;
 	gtk_text_iter_backward_chars(&t0,len);
 	if (tagnames) {
@@ -147,25 +188,38 @@ static void tsappend(char* message, char** tagnames, int ensurenewline)
 	gtk_text_buffer_delete_mark(tbuf,mark);
 }
 
-static void sendMessage(GtkWidget* w /* <-- msg entry widget */, gpointer /* data */)
+static void sendMessage(GtkWidget* w, gpointer)
 {
 	char* tags[2] = {"self",NULL};
 	tsappend("me: ",tags,0);
-	GtkTextIter mstart; /* start of message pointer */
-	GtkTextIter mend;   /* end of message pointer */
+	GtkTextIter mstart;
+	GtkTextIter mend;
 	gtk_text_buffer_get_start_iter(mbuf,&mstart);
 	gtk_text_buffer_get_end_iter(mbuf,&mend);
 	char* message = gtk_text_buffer_get_text(mbuf,&mstart,&mend,1);
 	size_t len = g_utf8_strlen(message,-1);
-	/* XXX we should probably do the actual network stuff in a different
-	 * thread and have it call this once the message is actually sent. */
-	ssize_t nbytes;
-	if ((nbytes = send(sockfd,message,len,0)) == -1)
+
+	unsigned char iv[16];
+	unsigned char ciphertext[1024];
+	RAND_bytes(iv, sizeof(iv));
+
+	int ciphertext_len = encrypt_message((unsigned char *)message, len, shared_key, iv, ciphertext);
+
+	if (ciphertext_len == -1) {
+		fprintf(stderr, "Encryption failed\n");
+		return;
+	}
+
+	unsigned char to_send[16 + ciphertext_len];
+	memcpy(to_send, iv, 16);
+	memcpy(to_send + 16, ciphertext, ciphertext_len);
+
+	ssize_t nbytes = send(sockfd, to_send, sizeof(to_send), 0);
+	if (nbytes == -1)
 		error("send failed");
 
 	tsappend(message,NULL,1);
 	free(message);
-	/* clear message text and reset focus */
 	gtk_text_buffer_delete(mbuf,&mstart,&mend);
 	gtk_widget_grab_focus(w);
 }
@@ -187,7 +241,6 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "could not read DH params from file 'params'\n");
 		return 1;
 	}
-	// define long options
 	static struct option long_opts[] = {
 		{"connect",  required_argument, 0, 'c'},
 		{"listen",   no_argument,       0, 'l'},
@@ -195,7 +248,6 @@ int main(int argc, char *argv[])
 		{"help",     no_argument,       0, 'h'},
 		{0,0,0,0}
 	};
-	// process options:
 	char c;
 	int opt_index = 0;
 	int port = 1337;
@@ -222,17 +274,18 @@ int main(int argc, char *argv[])
 				return 1;
 		}
 	}
-	/* NOTE: might want to start this after gtk is initialized so you can
-	 * show the messages in the main window instead of stderr/stdout.  If
-	 * you decide to give that a try, this might be of use:
-	 * https://docs.gtk.org/gtk4/func.is_initialized.html */
-	if (isclient) {
+
+	if (isclient) 
+	{
 		initClientNet(hostname,port);
-	} else {
+	}
+	else
+	{
 		initServerNet(port);
 	}
+	perform_key_exchange(isclient);
 
-	/* setup GTK... */
+
 	GtkBuilder* builder;
 	GObject* window;
 	GObject* button;
@@ -241,65 +294,123 @@ int main(int argc, char *argv[])
 	GError* error = NULL;
 	gtk_init(&argc, &argv);
 	builder = gtk_builder_new();
-	if (gtk_builder_add_from_file(builder,"layout.ui",&error) == 0) {
+	if (gtk_builder_add_from_file(builder,"layout.ui",&error) == 0) 
+	{
 		g_printerr("Error reading %s\n", error->message);
 		g_clear_error(&error);
 		return 1;
 	}
+
 	mark  = gtk_text_mark_new(NULL,TRUE);
 	window = gtk_builder_get_object(builder,"window");
 	g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+
 	transcript = gtk_builder_get_object(builder, "transcript");
 	tview = GTK_TEXT_VIEW(transcript);
+
 	message = gtk_builder_get_object(builder, "message");
 	tbuf = gtk_text_view_get_buffer(tview);
 	mbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(message));
+
 	button = gtk_builder_get_object(builder, "send");
 	g_signal_connect_swapped(button, "clicked", G_CALLBACK(sendMessage), GTK_WIDGET(message));
 	gtk_widget_grab_focus(GTK_WIDGET(message));
 	GtkCssProvider* css = gtk_css_provider_new();
+
 	gtk_css_provider_load_from_path(css,"colors.css",NULL);
 	gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
 			GTK_STYLE_PROVIDER(css),
 			GTK_STYLE_PROVIDER_PRIORITY_USER);
 
-	/* setup styling tags for transcript text buffer */
 	gtk_text_buffer_create_tag(tbuf,"status","foreground","#657b83","font","italic",NULL);
 	gtk_text_buffer_create_tag(tbuf,"friend","foreground","#6c71c4","font","bold",NULL);
 	gtk_text_buffer_create_tag(tbuf,"self","foreground","#268bd2","font","bold",NULL);
 
-	/* start receiver thread: */
 	if (pthread_create(&trecv,0,recvMsg,0)) {
 		fprintf(stderr, "Failed to create update thread.\n");
 	}
 
 	gtk_main();
-
 	shutdownNetwork();
 	return 0;
 }
 
-/* thread function to listen for new messages and post them to the gtk
- * main loop for processing: */
+void perform_key_exchange(int is_client)
+{
+    dhKey long_term, eph;
+    dhKey peer_long_term, peer_eph;
+    initKey(&long_term);
+    initKey(&eph);
+    initKey(&peer_long_term);
+    initKey(&peer_eph);
+
+    if (is_client)
+	{
+        // read client long-term key
+        readDH("client.key", &long_term);
+        dhGenk(&eph);
+
+        // send keys
+        serialize_mpz(sockfd, long_term.PK);
+        serialize_mpz(sockfd, eph.PK);
+
+        // receive keys
+        deserialize_mpz(peer_long_term.PK, sockfd);
+        deserialize_mpz(peer_eph.PK, sockfd);
+    }
+	else
+	{
+        readDH("server.key", &long_term);
+        dhGenk(&eph);
+
+        deserialize_mpz(peer_long_term.PK, sockfd);
+        deserialize_mpz(peer_eph.PK, sockfd);
+
+        // send
+        serialize_mpz(sockfd, long_term.PK);
+        serialize_mpz(sockfd, eph.PK);
+    }
+
+    // compute 3DH shared secret
+    dh3Finalk(&long_term, &eph, &peer_long_term, &peer_eph, shared_key, SYMM_KEY_LEN);
+
+    shredKey(&long_term);
+    shredKey(&eph);
+    shredKey(&peer_long_term);
+    shredKey(&peer_eph);
+}
+
+
 void* recvMsg(void*)
 {
-	size_t maxlen = 512;
-	char msg[maxlen+2]; /* might add \n and \0 */
-	ssize_t nbytes;
-	while (1) {
-		if ((nbytes = recv(sockfd,msg,maxlen,0)) == -1)
-			error("recv failed");
-		if (nbytes == 0) {
-			/* XXX maybe show in a status message that the other
-			 * side has disconnected. */
-			return 0;
-		}
-		char* m = malloc(maxlen+2);
-		memcpy(m,msg,nbytes);
-		if (m[nbytes-1] != '\n')
-			m[nbytes++] = '\n';
-		m[nbytes] = 0;
-		g_main_context_invoke(NULL,shownewmessage,(gpointer)m);
-	}
-	return 0;
+    size_t maxlen = 1024;
+    unsigned char buf[maxlen];
+    ssize_t nbytes;
+
+    while (1) {
+        nbytes = recv(sockfd, buf, maxlen, 0);
+        if (nbytes == -1) error("recv failed");
+        if (nbytes == 0) return 0;
+
+        if (nbytes < 16) {
+            fprintf(stderr, "Received message too short to contain IV\n");
+            continue;
+        }
+
+        unsigned char iv[16];
+        memcpy(iv, buf, 16);
+
+        unsigned char plaintext[1024];
+        int decrypted_len = decrypt_message(buf + 16, nbytes - 16, shared_key, iv, plaintext);
+        if (decrypted_len == -1) {
+            fprintf(stderr, "Decryption failed\n");
+            continue;
+        }
+
+        plaintext[decrypted_len] = 0;
+        char* m = malloc(decrypted_len + 2);
+        memcpy(m, plaintext, decrypted_len + 1);
+        g_main_context_invoke(NULL, shownewmessage, (gpointer)m);
+    }
+    return 0;
 }
