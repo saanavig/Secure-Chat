@@ -9,7 +9,10 @@
 #include <openssl/rand.h>
 #include <getopt.h>
 #include "dh.h"
+
 #include "keys.h"
+#include "util.h"
+
 
 #ifndef HOST_NAME_MAX
 #define HOST_NAME_MAX 256
@@ -235,6 +238,8 @@ static gboolean shownewmessage(gpointer msg)
 	return 0;
 }
 
+void perform_key_exchange(int is_client);
+
 int main(int argc, char *argv[])
 {
 	if (init("params") != 0) {
@@ -346,6 +351,14 @@ void perform_key_exchange(int is_client)
 
     if (is_client)
 	{
+		//testing why assertion fails
+		fprintf(stderr, "Reading client.key...\n");
+		int status = readDH("client.key", &long_term);
+
+		if (status != 0) {
+			fprintf(stderr, "Failed to read client.key!\n");
+		}
+
         // read client long-term key
         readDH("client.key", &long_term);
         dhGenk(&eph);
@@ -360,6 +373,14 @@ void perform_key_exchange(int is_client)
     }
 	else
 	{
+
+		fprintf(stderr, "Reading server.key...\n");
+		int status = readDH("server.key", &long_term);
+
+		if (status != 0) {
+			fprintf(stderr, "Failed to read server.key!\n");
+		}
+
         readDH("server.key", &long_term);
         dhGenk(&eph);
 
