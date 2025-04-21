@@ -350,50 +350,79 @@ void perform_key_exchange(int is_client)
     initKey(&peer_eph);
 
     if (is_client)
-	{
-		//testing why assertion fails
-		fprintf(stderr, "Reading client.key...\n");
-		int status = readDH("client.key", &long_term);
+    {
+        fprintf(stderr, "Reading client.key...\n");
+        int status = readDH("client.key", &long_term);
+        if (status != 0) {
+            fprintf(stderr, "Failed to read client.key!\n");
+        }
 
-		if (status != 0) {
-			fprintf(stderr, "Failed to read client.key!\n");
-		}
-
-        // read client long-term key
-        readDH("client.key", &long_term);
         dhGenk(&eph);
 
-        // send keys
+        // Print short hex fingerprints
+        char* long_pk = mpz_get_str(NULL, 16, long_term.PK);
+        char* eph_pk = mpz_get_str(NULL, 16, eph.PK);
+        printf("[CLIENT] Long-term PK (hex): %.8s...\n", long_pk);
+        printf("[CLIENT] Ephemeral PK (hex): %.8s...\n", eph_pk);
+        free(long_pk);
+        free(eph_pk);
+
+        // send client keys
         serialize_mpz(sockfd, long_term.PK);
         serialize_mpz(sockfd, eph.PK);
 
-        // receive keys
+        // receive server keys
         deserialize_mpz(peer_long_term.PK, sockfd);
         deserialize_mpz(peer_eph.PK, sockfd);
+
+        char* peer_long_pk = mpz_get_str(NULL, 16, peer_long_term.PK);
+        char* peer_eph_pk = mpz_get_str(NULL, 16, peer_eph.PK);
+        printf("[CLIENT] Received server long-term PK: %.8s...\n", peer_long_pk);
+        printf("[CLIENT] Received server ephemeral PK: %.8s...\n", peer_eph_pk);
+        free(peer_long_pk);
+        free(peer_eph_pk);
     }
-	else
-	{
+    else
+    {
+        fprintf(stderr, "Reading server.key...\n");
+        int status = readDH("server.key", &long_term);
+        if (status != 0) {
+            fprintf(stderr, "Failed to read server.key!\n");
+        }
 
-		fprintf(stderr, "Reading server.key...\n");
-		int status = readDH("server.key", &long_term);
-
-		if (status != 0) {
-			fprintf(stderr, "Failed to read server.key!\n");
-		}
-
-        readDH("server.key", &long_term);
         dhGenk(&eph);
 
+        char* long_pk = mpz_get_str(NULL, 16, long_term.PK);
+        char* eph_pk = mpz_get_str(NULL, 16, eph.PK);
+        printf("[SERVER] Long-term PK (hex): %.8s...\n", long_pk);
+        printf("[SERVER] Ephemeral PK (hex): %.8s...\n", eph_pk);
+        free(long_pk);
+        free(eph_pk);
+
+        // receive client keys
         deserialize_mpz(peer_long_term.PK, sockfd);
         deserialize_mpz(peer_eph.PK, sockfd);
 
-        // send
+        char* peer_long_pk = mpz_get_str(NULL, 16, peer_long_term.PK);
+        char* peer_eph_pk = mpz_get_str(NULL, 16, peer_eph.PK);
+        printf("[SERVER] Received client long-term PK: %.8s...\n", peer_long_pk);
+        printf("[SERVER] Received client ephemeral PK: %.8s...\n", peer_eph_pk);
+        free(peer_long_pk);
+        free(peer_eph_pk);
+
+        // send server keys
         serialize_mpz(sockfd, long_term.PK);
         serialize_mpz(sockfd, eph.PK);
     }
 
     // compute 3DH shared secret
     dh3Finalk(&long_term, &eph, &peer_long_term, &peer_eph, shared_key, SYMM_KEY_LEN);
+
+    printf("[INFO] Shared key (hex): ");
+    for (int i = 0; i < SYMM_KEY_LEN; i++)
+        printf("%02x", shared_key[i]);
+    printf("\n");
+    fflush(stdout);
 
     shredKey(&long_term);
     shredKey(&eph);
