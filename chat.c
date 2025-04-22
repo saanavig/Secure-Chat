@@ -246,6 +246,9 @@ static void sendMessage(GtkWidget* w, gpointer)
     free(message);
     gtk_text_buffer_delete(mbuf, &mstart, &mend);
     gtk_widget_grab_focus(w);
+
+	//final print statement for verification
+	printf("[%s] → Encrypted + Authenticated message sent.\n", isclient ? "CLIENT" : "SERVER");
 }
 
 
@@ -531,6 +534,8 @@ void* recvMsg(void*)
         char* m = malloc(decrypted_len + 2);
         memcpy(m, plaintext, decrypted_len + 1);
         g_main_context_invoke(NULL, shownewmessage, (gpointer)m);
+		printf("[%s] ← Message received, verified, and decrypted.\n", isclient ? "CLIENT" : "SERVER");
     }
+
     return 0;
 }
