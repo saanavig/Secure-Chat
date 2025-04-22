@@ -24,6 +24,8 @@
 #define SYMM_KEY_LEN 32
 unsigned char shared_key[SYMM_KEY_LEN] = {0};
 
+#define MAC_LEN 32  //HMAC-SHA256 produces 32 bytes
+
 static GtkTextBuffer* tbuf;
 static GtkTextBuffer* mbuf;
 static GtkTextView*  tview;
@@ -192,42 +194,60 @@ static void tsappend(char* message, char** tagnames, int ensurenewline)
 
 static void sendMessage(GtkWidget* w, gpointer)
 {
-	char* tags[2] = {"self",NULL};
-	tsappend("me: ",tags,0);
-	GtkTextIter mstart;
-	GtkTextIter mend;
-	gtk_text_buffer_get_start_iter(mbuf,&mstart);
-	gtk_text_buffer_get_end_iter(mbuf,&mend);
-	char* message = gtk_text_buffer_get_text(mbuf,&mstart,&mend,1);
-	size_t len = g_utf8_strlen(message,-1);
+    char* tags[2] = {"self", NULL};
+    tsappend("me: ", tags, 0);
 
-	unsigned char iv[16];
-	unsigned char ciphertext[1024];
-	RAND_bytes(iv, sizeof(iv));
+    GtkTextIter mstart;
+    GtkTextIter mend;
+    gtk_text_buffer_get_start_iter(mbuf, &mstart);
+    gtk_text_buffer_get_end_iter(mbuf, &mend);
 
-	int ciphertext_len = encrypt_message((unsigned char *)message, len, shared_key, iv, ciphertext);
+    char* message = gtk_text_buffer_get_text(mbuf, &mstart, &mend, 1);
+    size_t len = g_utf8_strlen(message, -1);
 
-	if (ciphertext_len == -1) {
-		fprintf(stderr, "Encryption failed\n");
-		return;
-	}
+    unsigned char iv[16];
+    unsigned char ciphertext[1024];
+    RAND_bytes(iv, sizeof(iv));
 
-	//confirm message encryption
-	printf("[INFO] AES-256-CBC encryption successful. Ciphertext length: %d bytes\n", ciphertext_len);
+    int ciphertext_len = encrypt_message((unsigned char *)message, len, shared_key, iv, ciphertext);
+    if (ciphertext_len == -1) {
+        fprintf(stderr, "Encryption failed\n");
+        return;
+    }
 
-	unsigned char to_send[16 + ciphertext_len];
-	memcpy(to_send, iv, 16);
-	memcpy(to_send + 16, ciphertext, ciphertext_len);
+    printf("[INFO] AES-256-CBC encryption successful. Ciphertext length: %d bytes\n", ciphertext_len);
 
-	ssize_t nbytes = send(sockfd, to_send, sizeof(to_send), 0);
-	if (nbytes == -1)
-		error("send failed");
+    // compute HMAC-SHA256 over [IV || ciphertext]
+    unsigned char mac[MAC_LEN];
+    unsigned int mac_len;
 
-	tsappend(message,NULL,1);
-	free(message);
-	gtk_text_buffer_delete(mbuf,&mstart,&mend);
-	gtk_widget_grab_focus(w);
+    unsigned char hmac_input[16 + ciphertext_len];
+    memcpy(hmac_input, iv, 16);
+    memcpy(hmac_input + 16, ciphertext, ciphertext_len);
+
+    HMAC(EVP_sha256(), shared_key, SYMM_KEY_LEN, hmac_input, sizeof(hmac_input), mac, &mac_len);
+
+    printf("[INFO] HMAC-SHA256 generated: ");
+    for (int i = 0; i < MAC_LEN; i++) {
+        printf("%02x", mac[i]);
+    }
+    printf("\n");
+
+    unsigned char to_send[16 + ciphertext_len + MAC_LEN];
+    memcpy(to_send, iv, 16);
+    memcpy(to_send + 16, ciphertext, ciphertext_len);
+    memcpy(to_send + 16 + ciphertext_len, mac, MAC_LEN);
+
+    ssize_t nbytes = send(sockfd, to_send, sizeof(to_send), 0);
+    if (nbytes == -1)
+        error("send failed");
+
+    tsappend(message, NULL, 1);
+    free(message);
+    gtk_text_buffer_delete(mbuf, &mstart, &mend);
+    gtk_widget_grab_focus(w);
 }
+
 
 static gboolean shownewmessage(gpointer msg)
 {
@@ -468,25 +488,44 @@ void* recvMsg(void*)
         if (nbytes == -1) error("recv failed");
         if (nbytes == 0) return 0;
 
-        if (nbytes < 16) {
-            fprintf(stderr, "Received message too short to contain IV\n");
+        if (nbytes < 16 + MAC_LEN) {
+            fprintf(stderr, "Received message too short to contain IV + MAC\n");
             continue;
         }
 
         unsigned char iv[16];
         memcpy(iv, buf, 16);
 
+        int ciphertext_len = nbytes - 16 - MAC_LEN;
+        unsigned char* ciphertext = buf + 16;
+
+        unsigned char* received_mac = buf + 16 + ciphertext_len;
+
+        // recompute HMAC over [IV || ciphertext]
+        unsigned char hmac_input[16 + ciphertext_len];
+        memcpy(hmac_input, iv, 16);
+        memcpy(hmac_input + 16, ciphertext, ciphertext_len);
+
+        unsigned char computed_mac[MAC_LEN];
+        unsigned int mac_len;
+        HMAC(EVP_sha256(), shared_key, SYMM_KEY_LEN,
+				hmac_input, sizeof(hmac_input),
+				computed_mac, &mac_len);
+
+        if (memcmp(received_mac, computed_mac, MAC_LEN) != 0) {
+            fprintf(stderr, "[WARNING] Message integrity check FAILED (HMAC mismatch)!\n");
+            continue;
+        } else {
+            printf("[INFO] HMAC verified successfully. Message is authentic.\n");
+        }
+
+        // confirm decryption
         unsigned char plaintext[1024];
-        int decrypted_len = decrypt_message(buf + 16, nbytes - 16, shared_key, iv, plaintext);
+        int decrypted_len = decrypt_message(ciphertext, ciphertext_len, shared_key, iv, plaintext);
         if (decrypted_len == -1) {
             fprintf(stderr, "Decryption failed\n");
             continue;
         }
-
-		//confirm message decryption
-		printf("[INFO] AES-256-CBC decryption successful. Plaintext length: %d bytes\n", decrypted_len);
-		printf("[INFO] Received plaintext: \"%s\"\n", plaintext);
-
 
         plaintext[decrypted_len] = 0;
         char* m = malloc(decrypted_len + 2);
