@@ -212,6 +212,9 @@ static void sendMessage(GtkWidget* w, gpointer)
 		return;
 	}
 
+	//confirm message encryption
+	printf("[INFO] AES-256-CBC encryption successful. Ciphertext length: %d bytes\n", ciphertext_len);
+
 	unsigned char to_send[16 + ciphertext_len];
 	memcpy(to_send, iv, 16);
 	memcpy(to_send + 16, ciphertext, ciphertext_len);
@@ -479,6 +482,11 @@ void* recvMsg(void*)
             fprintf(stderr, "Decryption failed\n");
             continue;
         }
+
+		//confirm message decryption
+		printf("[INFO] AES-256-CBC decryption successful. Plaintext length: %d bytes\n", decrypted_len);
+		printf("[INFO] Received plaintext: \"%s\"\n", plaintext);
+
 
         plaintext[decrypted_len] = 0;
         char* m = malloc(decrypted_len + 2);
