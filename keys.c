@@ -52,7 +52,7 @@ int writeDH(char* fname, dhKey* k)
 		fd = open(fname, O_RDWR | O_CREAT | O_TRUNC, 0600);
 		f = fdopen(fd, "wb");
 		if (!f) return -1;
-		fprintf(f, "name:%s\n", k->name);
+		// fprintf(f, "name:%s\n", k->name);
 		gmp_fprintf(f, "pk:%Zd\n", k->PK);
 		gmp_fprintf(f, "sk:%Zd\n", k->SK);
 		fclose(f);
@@ -60,7 +60,7 @@ int writeDH(char* fname, dhKey* k)
 
 	f = fopen(fnamepub, "wb");
 	if (!f) return -1;
-	fprintf(f, "name:%s\n", k->name);
+	// fprintf(f, "name:%s\n", k->name);
 	gmp_fprintf(f, "pk:%Zd\n", k->PK);
 	fprintf(f, "sk:0\n");
 	fclose(f);
@@ -94,7 +94,7 @@ int readDH(char* fname, dhKey* k)
 	}
 	strncpy(k->name, line + 5, MAX_NAME);
 	k->name[strcspn(k->name, "\r\n")] = 0; // Strip newline
-	fprintf(stderr, "Read name: %s\n", k->name);
+	// fprintf(stderr, "Read name: %s\n", k->name);
 
 	// Read pk
 	if (gmp_fscanf(f, "pk:%Zd\n", k->PK) != 1) {

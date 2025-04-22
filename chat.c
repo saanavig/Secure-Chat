@@ -375,7 +375,7 @@ void perform_key_exchange(int is_client)
     const char* peer_pub = is_client ? "server_rsa_pub.pem" : "client_rsa_pub.pem";
 
     // long term key
-    fprintf(stderr, "Reading %s...\n", is_client ? "client.key" : "server.key");
+    // fprintf(stderr, "Reading %s...\n", is_client ? "client.key" : "server.key");
     int status = readDH(is_client ? "client.key" : "server.key", &long_term);
     if (status != 0) {
         fprintf(stderr, "Failed to read %s!\n", is_client ? "client.key" : "server.key");
@@ -387,8 +387,8 @@ void perform_key_exchange(int is_client)
     //fingerprints
     char* long_pk = mpz_get_str(NULL, 16, long_term.PK);
     char* eph_pk = mpz_get_str(NULL, 16, eph.PK);
-    printf("[%s] Long-term PK (hex): %.8s...\n", is_client ? "CLIENT" : "SERVER", long_pk);
-    printf("[%s] Ephemeral PK (hex): %.8s...\n", is_client ? "CLIENT" : "SERVER", eph_pk);
+    // printf("[%s] Long-term PK (hex): %.8s...\n", is_client ? "CLIENT" : "SERVER", long_pk);
+    // printf("[%s] Ephemeral PK (hex): %.8s...\n", is_client ? "CLIENT" : "SERVER", eph_pk);
     free(long_pk);
     free(eph_pk);
 
@@ -458,8 +458,8 @@ void perform_key_exchange(int is_client)
     // print keys (16 bytes only) for testing
     char* peer_long_pk = mpz_get_str(NULL, 16, peer_long_term.PK);
     char* peer_eph_pk = mpz_get_str(NULL, 16, peer_eph.PK);
-    printf("[%s] Received peer long-term PK: %.8s...\n", is_client ? "CLIENT" : "SERVER", peer_long_pk);
-    printf("[%s] Received peer ephemeral PK: %.8s...\n", is_client ? "CLIENT" : "SERVER", peer_eph_pk);
+    // printf("[%s] Received peer long-term PK: %.8s...\n", is_client ? "CLIENT" : "SERVER", peer_long_pk);
+    // printf("[%s] Received peer ephemeral PK: %.8s...\n", is_client ? "CLIENT" : "SERVER", peer_eph_pk);
     free(peer_long_pk);
     free(peer_eph_pk);
 
