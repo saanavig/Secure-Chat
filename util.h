@@ -1,5 +1,6 @@
 #pragma once
 #include <gmp.h>
+
 /* convenience macros */
 #define ISPRIME(x) mpz_probab_prime_p(x,10)
 #define NEWZ(x) mpz_t x; mpz_init(x)
@@ -7,7 +8,10 @@
  * least significant byte is first (little endian bytewise). */
 #define BYTES2Z(x,buf,len) mpz_import(x,len,-1,1,0,0,buf)
 #define Z2BYTES(buf,len,x) mpz_export(buf,len,-1,1,0,0,x)
-#define LE(x) uint32_t x##_le = htole32((uint32_t)x);
+#define LE(x) uint32_t x##_le = htole32((uint32_t)x)
+
+#ifndef UTIL_H
+#define UTIL_H
 
 /* utility functions */
 
@@ -18,17 +22,17 @@
  * */
 size_t serialize_mpz(int fd, mpz_t x);
 
-/** inverse operation of serialize_mpz
- * @param x will be set to the integer serialized into buf.  NOTE: x must
- * already be initialized (with mpz_init(...) / NEWZ(...)
- * @param fd is the file descriptor from which to read serialized x
- * @return 0 for success */
+/** inverse operation of serialize_mpz */
 int deserialize_mpz(mpz_t x, int fd);
 
-/** Like read(), but retry on EINTR and EWOULDBLOCK,
- * abort on other errors, and don't return early. */
+/** Like read(), but retry on EINTR and EWOULDBLOCK */
 void xread(int fd, void *buf, size_t nBytes);
 
-/** Like write(), but retry on EINTR and EWOULDBLOCK,
- * abort on other errors, and don't return early. */
+/** Like write(), but retry on EINTR and EWOULDBLOCK */
 void xwrite(int fd, const void *buf, size_t nBytes);
+
+/** RSA signing and verification (declarations) */
+int sign_with_rsa(const char* priv_key_path, const char* msg, unsigned char** sig);
+int verify_rsa_signature(const char* pub_key_path, const char* msg, unsigned char* sig, unsigned int sig_len);
+
+#endif // UTIL_H

@@ -13,7 +13,6 @@
 #include "keys.h"
 #include "util.h"
 
-
 #ifndef HOST_NAME_MAX
 #define HOST_NAME_MAX 256
 #endif
@@ -349,78 +348,102 @@ void perform_key_exchange(int is_client)
     initKey(&peer_long_term);
     initKey(&peer_eph);
 
-    if (is_client)
-    {
-        fprintf(stderr, "Reading client.key...\n");
-        int status = readDH("client.key", &long_term);
-        if (status != 0) {
-            fprintf(stderr, "Failed to read client.key!\n");
-        }
+    const char* my_priv = is_client ? "client_rsa.pem" : "server_rsa.pem";
+    const char* peer_pub = is_client ? "server_rsa_pub.pem" : "client_rsa_pub.pem";
 
-        dhGenk(&eph);
+    // long term key
+    fprintf(stderr, "Reading %s...\n", is_client ? "client.key" : "server.key");
+    int status = readDH(is_client ? "client.key" : "server.key", &long_term);
+    if (status != 0) {
+        fprintf(stderr, "Failed to read %s!\n", is_client ? "client.key" : "server.key");
+    }
 
-        // Print short hex fingerprints
-        char* long_pk = mpz_get_str(NULL, 16, long_term.PK);
-        char* eph_pk = mpz_get_str(NULL, 16, eph.PK);
-        printf("[CLIENT] Long-term PK (hex): %.8s...\n", long_pk);
-        printf("[CLIENT] Ephemeral PK (hex): %.8s...\n", eph_pk);
-        free(long_pk);
-        free(eph_pk);
+    //genkey
+    dhGenk(&eph);
 
-        // send client keys
+    //fingerprints
+    char* long_pk = mpz_get_str(NULL, 16, long_term.PK);
+    char* eph_pk = mpz_get_str(NULL, 16, eph.PK);
+    printf("[%s] Long-term PK (hex): %.8s...\n", is_client ? "CLIENT" : "SERVER", long_pk);
+    printf("[%s] Ephemeral PK (hex): %.8s...\n", is_client ? "CLIENT" : "SERVER", eph_pk);
+    free(long_pk);
+    free(eph_pk);
+
+    //signown ephemeral key 
+    char* eph_str = mpz_get_str(NULL, 10, eph.PK);
+    unsigned char* signature = NULL;
+    unsigned int sig_len = sign_with_rsa(my_priv, eph_str, &signature);
+    printf("[%s] Signed ephemeral key.\n", is_client ? "CLIENT" : "SERVER");
+
+    if (is_client) {
+        // client sends own keys and signature, then receive peer's
         serialize_mpz(sockfd, long_term.PK);
         serialize_mpz(sockfd, eph.PK);
+        send(sockfd, &sig_len, sizeof(sig_len), 0);
+        send(sockfd, signature, sig_len, 0);
 
-        // receive server keys
         deserialize_mpz(peer_long_term.PK, sockfd);
         deserialize_mpz(peer_eph.PK, sockfd);
 
-        char* peer_long_pk = mpz_get_str(NULL, 16, peer_long_term.PK);
-        char* peer_eph_pk = mpz_get_str(NULL, 16, peer_eph.PK);
-        printf("[CLIENT] Received server long-term PK: %.8s...\n", peer_long_pk);
-        printf("[CLIENT] Received server ephemeral PK: %.8s...\n", peer_eph_pk);
-        free(peer_long_pk);
-        free(peer_eph_pk);
-    }
-    else
-    {
-        fprintf(stderr, "Reading server.key...\n");
-        int status = readDH("server.key", &long_term);
-        if (status != 0) {
-            fprintf(stderr, "Failed to read server.key!\n");
+        unsigned int recv_sig_len;
+        recv(sockfd, &recv_sig_len, sizeof(recv_sig_len), 0);
+        unsigned char* recv_sig = malloc(recv_sig_len);
+        recv(sockfd, recv_sig, recv_sig_len, 0);
+
+        char* peer_eph_str = mpz_get_str(NULL, 10, peer_eph.PK);
+        int verified = verify_rsa_signature(peer_pub, peer_eph_str, recv_sig, recv_sig_len);
+        if (!verified) {
+            fprintf(stderr, "CLIENT: Signature verification failed!\n");
+            exit(1);
+        } else {
+            printf("CLIENT: Signature verified.\n");
         }
 
-        dhGenk(&eph);
-
-        char* long_pk = mpz_get_str(NULL, 16, long_term.PK);
-        char* eph_pk = mpz_get_str(NULL, 16, eph.PK);
-        printf("[SERVER] Long-term PK (hex): %.8s...\n", long_pk);
-        printf("[SERVER] Ephemeral PK (hex): %.8s...\n", eph_pk);
-        free(long_pk);
-        free(eph_pk);
-
-        // receive client keys
+        free(peer_eph_str);
+        free(recv_sig);
+    } else {
+        // server receives first, then send
         deserialize_mpz(peer_long_term.PK, sockfd);
         deserialize_mpz(peer_eph.PK, sockfd);
 
-        char* peer_long_pk = mpz_get_str(NULL, 16, peer_long_term.PK);
-        char* peer_eph_pk = mpz_get_str(NULL, 16, peer_eph.PK);
-        printf("[SERVER] Received client long-term PK: %.8s...\n", peer_long_pk);
-        printf("[SERVER] Received client ephemeral PK: %.8s...\n", peer_eph_pk);
-        free(peer_long_pk);
-        free(peer_eph_pk);
+        unsigned int recv_sig_len;
+        recv(sockfd, &recv_sig_len, sizeof(recv_sig_len), 0);
+        unsigned char* recv_sig = malloc(recv_sig_len);
+        recv(sockfd, recv_sig, recv_sig_len, 0);
 
-        // send server keys
+        char* peer_eph_str = mpz_get_str(NULL, 10, peer_eph.PK);
+        int verified = verify_rsa_signature(peer_pub, peer_eph_str, recv_sig, recv_sig_len);
+        if (!verified) {
+            fprintf(stderr, "SERVER: Signature verification failed!\n");
+            exit(1);
+        } else {
+            printf("SERVER: Signature verified.\n");
+        }
+
+        free(peer_eph_str);
+        free(recv_sig);
+
         serialize_mpz(sockfd, long_term.PK);
         serialize_mpz(sockfd, eph.PK);
+        send(sockfd, &sig_len, sizeof(sig_len), 0);
+        send(sockfd, signature, sig_len, 0);
     }
 
-    // compute 3DH shared secret
+    free(signature);
+    free(eph_str);
+
+    // print keys (16 bytes only) for testing
+    char* peer_long_pk = mpz_get_str(NULL, 16, peer_long_term.PK);
+    char* peer_eph_pk = mpz_get_str(NULL, 16, peer_eph.PK);
+    printf("[%s] Received peer long-term PK: %.8s...\n", is_client ? "CLIENT" : "SERVER", peer_long_pk);
+    printf("[%s] Received peer ephemeral PK: %.8s...\n", is_client ? "CLIENT" : "SERVER", peer_eph_pk);
+    free(peer_long_pk);
+    free(peer_eph_pk);
+
+    // final key exchange
     dh3Finalk(&long_term, &eph, &peer_long_term, &peer_eph, shared_key, SYMM_KEY_LEN);
-
     printf("[INFO] Shared key (hex): ");
-    for (int i = 0; i < SYMM_KEY_LEN; i++)
-        printf("%02x", shared_key[i]);
+    for (int i = 0; i < SYMM_KEY_LEN; i++) printf("%02x", shared_key[i]);
     printf("\n");
     fflush(stdout);
 

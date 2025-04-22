@@ -6,6 +6,11 @@
 #include <assert.h>
 #include <inttypes.h>
 
+#include <openssl/pem.h>
+#include <openssl/evp.h>
+#include <openssl/err.h>
+
+
 #ifdef __APPLE__
 #include <libkern/OSByteOrder.h>
 
@@ -90,4 +95,66 @@ int deserialize_mpz(mpz_t x, int fd)
 	xread(fd,buf,nB);
 	BYTES2Z(x,buf,nB);
 	return 0;
+}
+
+//add digital signs to assure security
+int sign_with_rsa(const char* priv_key_path, const char* msg, unsigned char** sig)
+{
+    FILE* fp = fopen(priv_key_path, "r");
+    if (!fp) {
+        fprintf(stderr, "Could not open private key file: %s\n", priv_key_path);
+        return -1;
+    }
+
+    EVP_PKEY* pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
+    fclose(fp);
+
+    if (!pkey) {
+        fprintf(stderr, "Failed to read private key.\n");
+        return -1;
+    }
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_SignInit(ctx, EVP_sha256());
+    EVP_SignUpdate(ctx, msg, strlen(msg));
+
+    *sig = malloc(EVP_PKEY_size(pkey));
+    unsigned int sig_len = 0;
+
+    if (!EVP_SignFinal(ctx, *sig, &sig_len, pkey)) {
+        fprintf(stderr, "Failed to generate signature.\n");
+        sig_len = -1;
+    }
+
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return sig_len;
+}
+
+//verify sign
+int verify_rsa_signature(const char* pub_key_path, const char* msg, unsigned char* sig, unsigned int sig_len)
+{
+    FILE* fp = fopen(pub_key_path, "r");
+    if (!fp) {
+        fprintf(stderr, "Could not open public key file: %s\n", pub_key_path);
+        return 0;
+    }
+
+    EVP_PKEY* pubkey = PEM_read_PUBKEY(fp, NULL, NULL, NULL);
+    fclose(fp);
+
+    if (!pubkey) {
+        fprintf(stderr, "Failed to read public key.\n");
+        return 0;
+    }
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_VerifyInit(ctx, EVP_sha256());
+    EVP_VerifyUpdate(ctx, msg, strlen(msg));
+
+    int result = EVP_VerifyFinal(ctx, sig, sig_len, pubkey);
+
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pubkey);
+    return result == 1;
 }
