@@ -1,0 +1,44 @@
+Assumptions:
+
+- Both client and server possess and trust each other's RSA public keys prior to initiating a session
+  (i.e., client_rsa_pub.pem and server_rsa_pub.pem).
+- The Diffie-Hellman parameters (params file) are correctly generated, secure, and shared between parties
+  beforehand.
+- The application is running in a trusted environment, meaning the host operating system is secure and attackers
+  do not have access to memory or key files.
+- The network is considered untrusted: an attacker may intercept, drop, replay, or tamper with packets.
+- The attacker does not have access to the RSA private keys (client_rsa.pem, server_rsa.pem) or the derived shared AES key.
+
+Security Claims:
+
+1. Confidentiality
+- All messages are encrypted using AES-256-CBC with a session key derived from a 3-party Diffie-Hellman (3DH) exchange.
+- The AES session key is unique to each session and not reused.
+
+2. Integrity
+- Each message is authenticated using HMAC-SHA256 computed over the concatenation of the IV and ciphertext.
+- On receiving, the HMAC is verified before decrypting the message.
+
+3. Mutual Authentication
+- Each party signs its ephemeral DH public key with its RSA private key.
+- The recipient verifies the signature using the sender's RSA public key.
+- If the signature does not match, the session is terminated.
+
+4. Forward Secrecy
+- Ephemeral DH keys are regenerated for every session, so even if long-term secrets are compromised, past
+  communications remain secure.
+
+5. Replay Protection (Implied)
+- Although no explicit nonce is used, session-specific ephemeral keys and new shared keys per session reduce the risk of replay.
+
+Limitations / Threat Model Edge Cases:
+- If an attacker compromises a device and obtains an RSA private key, they can impersonate that party indefinitely.
+- The system does not include protections against denial-of-service (DoS) attacks.
+- If the attacker successfully modifies the binary or disables signature/HMAC checks, all guarantees are void.
+- The application assumes correct and secure RSA and DH key generation (done using OpenSSL), which, if compromised,
+  undermines all guarantees.
+
+Conclusion:
+The secure chat implementation enforces strong confidentiality, message integrity, and authentication using
+well-established cryptographic primitives. The design assumes a secure host environment and known public keys
+but defends against all standard network-based threats, including eavesdropping and tampering.
