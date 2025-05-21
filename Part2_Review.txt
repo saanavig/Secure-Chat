@@ -1,0 +1,79 @@
+Security Analysis Report – 380-SECURE-CHAT
+
+Reviewed by: Saanavi Goyal
+Team Reviewed: Sujana Yeasmin & Gaurav Gupta
+
+---
+
+Security Assumptions:
+- Long-term public keys are securely exchanged before the session begins.
+- Diffie-Hellman parameters are cryptographically strong and securely generated.
+- AES-256 (CTR mode assumed, but code uses CBC) and HMAC-SHA256 are assumed secure.
+- The network is untrusted (susceptible to interception, tampering, and replay), but the devices are trusted.
+- IVs and ephemeral keys are generated using secure randomness.
+
+---
+
+Security Claims and Verification:
+
+1. Confidentiality
+   - Claim: AES-256-CTR is used to protect message content.
+   - Finding: The code actually uses AES-256-CBC, not CTR as claimed. While AES-CBC is strong,
+              it is vulnerable to padding oracle attacks if padding is not verified. No explicit padding validation was observed.
+   - Recommendation: Switch to AES-256-GCM or AES-CTR to avoid padding issues and benefit from built-in integrity verification.
+
+2. Integrity
+   - Claim: HMAC-SHA256 ensures message integrity.
+   - Finding: HMAC is correctly used to protect the IV and ciphertext. However, `memcmp()` is used for HMAC comparison, 
+              which can leak information via timing side channels.
+   - Recommendation: Use `CRYPTO_memcmp()` or a constant-time comparison function to prevent timing-based attacks.
+
+3. Mutual Authentication
+   - Claim: RSA signatures are used to verify ephemeral keys in 3DH.
+   - Finding: This method provides strong authentication, assuming private keys are secure.
+   - Risk: Compromised private keys allow impersonation.
+   - Recommendation: Consider additional layers like mutual TLS for identity verification.
+
+4. Forward Secrecy
+   - Claim: Ephemeral keys ensure forward secrecy.
+   - Finding: Confirmed. Session keys are derived from short-lived DH keys, ensuring past messages stay protected even
+              if long-term keys are leaked.
+
+5. Replay Protection
+   - Claim: Unique IVs and ephemeral keys mitigate replay attacks.
+   - Finding: This provides basic replay protection. However, there is no explicit use of nonces or timestamps,
+              so replays within the same session may still be possible.
+   - Recommendation: Implement message sequence numbers or timestamps for stronger protection.
+
+6. Man-in-the-Middle (MitM) Protection
+   - Claim: Signed ephemeral keys prevent unauthorized participation.
+   - Finding: True, assuming keys are exchanged securely and verified.
+
+---
+
+Code Security Observations:
+
+- Buffer Management: Use of fixed-size buffers (e.g., `char buf[1024]`) without input bounds checks could lead to buffer overflows.
+- Memory Management: Some dynamic allocations (e.g., in `recvMsg`) don’t check for NULL, leading to potential crashes.
+- Error Handling: Return values from encryption/decryption functions are often ignored, which could mask failures.
+- Key Management: Global storage of session keys increases risk if memory is compromised.
+                  Use local scope or secure memory zones where possible.
+
+---
+
+Overall Evaluation:
+The project implements strong foundational cryptographic techniques such as 3DH, AES encryption,
+and HMAC verification. However, a few inconsistencies between the documentation and actual code
+exist (e.g., use of CBC instead of CTR), and several areas such as error handling, memory safety,
+and replay prevention could be improved to harden security.
+
+---
+
+Suggestions for Improvement:
+- Replace AES-CBC with AES-GCM or AES-CTR.
+- Implement constant-time comparison for HMAC.
+- Introduce explicit replay protection (e.g., nonces or timestamps).
+- Improve error checking and memory allocation handling.
+- Avoid global key storage; consider secure key handling libraries if possible.
+- Perform regular code audits and penetration tests.
+
