@@ -66,18 +66,24 @@ Code Security Observations:
 ---
 
 Overall Evaluation:
-The project implements strong foundational cryptographic techniques such as 3DH, AES encryption,
-and HMAC verification. However, a few inconsistencies between the documentation and actual code
-exist (e.g., use of CBC instead of CTR), and several areas such as error handling, memory safety,
-and replay prevention could be improved to harden security.
+The project implements strong foundational cryptographic techniques such as 3DH key exchange, AES-256-CTR encryption,
+and HMAC-SHA256 verification. It correctly uses ephemeral keys to achieve forward secrecy, and fresh IVs with HMACs to
+ensure message confidentiality and integrity. The code also includes mutual authentication through signed ephemeral DH keys,
+which helps prevent man-in-the-middle attacks.
+While the cryptographic design is sound, there are a few implementation-level concerns:
+- Memory safety: Some dynamic allocations are not checked for NULL, and fixed-size buffers could benefit from stricter
+                 input validation to prevent overflows.
+- Error handling: Return values from critical functions like encryption or HMAC computation are sometimes ignored, 
+                  which could hide failures.
+- Replay protection: The use of fresh IVs limits replay attacks across sessions, but the system does not currently
+                     track message IDs or timestamps, leaving room for replay attacks within a session.
 
 ---
 
 Suggestions for Improvement:
-- Replace AES-CBC with AES-GCM or AES-CTR.
-- Implement constant-time comparison for HMAC.
-- Introduce explicit replay protection (e.g., nonces or timestamps).
-- Improve error checking and memory allocation handling.
-- Avoid global key storage; consider secure key handling libraries if possible.
-- Perform regular code audits and penetration tests.
-
+- Consider switching to AES-GCM for encryption, which provides built-in message integrity and may simplify HMAC handling.
+- Ensure constant-time comparison is used for all sensitive data (e.g., HMACs) to prevent timing attacks.
+- Introduce explicit replay protection by including a nonce, timestamp, or message sequence number in each message and rejecting duplicates.
+- Add error checking for critical function calls, especially for memory allocation (malloc) and cryptographic operations (EVP_*, HMAC),
+  to catch failures gracefully.
+- Avoid global key storage by keeping the session key in a more limited scope and securely erasing it after use.
