@@ -17,10 +17,14 @@ Security Assumptions:
 Security Claims and Verification:
 
 1. Confidentiality
-   - Claim: AES-256-CTR is used to protect message content.
-   - Finding: The code actually uses AES-256-CBC, not CTR as claimed. While AES-CBC is strong,
-              it is vulnerable to padding oracle attacks if padding is not verified. No explicit padding validation was observed.
-   - Recommendation: Switch to AES-256-GCM or AES-CTR to avoid padding issues and benefit from built-in integrity verification.
+- Claim: AES-256-CTR is used to protect message content.
+- Finding: The claim is accurate as the code uses EVP_aes_256_ctr(), which confirms the use of
+           AES-256 in Counter (CTR) mode. CTR does not require padding, which eliminates risks of
+           padding oracle attacks. The code also generates a new, random IV for every message using
+           RAND_bytes(), ensuring semantic security.
+- Recommendation: No change needed. AES-CTR is a strong, secure mode when implemented
+           correctly with a unique IV per message, as done here. For additional simplicity and
+           built-in integrity, AES-GCM could be considered in future implementations.
 
 2. Integrity
    - Claim: HMAC-SHA256 ensures message integrity.
